@@ -16,11 +16,11 @@ CREATE TABLE weather_stations (
 );
 
 CREATE TABLE sensors (
-	weather_id macaddr,
+	mac_address macaddr,
 	TYPE TEXT,
 	calibration_offset NUMERIC DEFAULT 1,
-    PRIMARY KEY(weather_id, type),
-	CONSTRAINT fk_weather_mac_address FOREIGN KEY(weather_id) REFERENCES weather_stations(mac_address) ON DELETE CASCADE
+    PRIMARY KEY(mac_address, type),
+	CONSTRAINT fk_weather_mac_address FOREIGN KEY(mac_address) REFERENCES weather_stations(mac_address) ON DELETE CASCADE
 );
 
 CREATE TABLE public.sensor_values (

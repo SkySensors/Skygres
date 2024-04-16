@@ -1,0 +1,119 @@
+name: docker build & publish
+on: 
+    push:
+        branches:
+            - main
+        tags: 
+            - v*.*.*
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+    build:
+        name: version and build
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            packages: write
+            id-token: write
+            pull-requests: write
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+            - uses: paulhatch/semantic-version@v5.4.0
+              id: semver
+              with:
+                  tag_prefix: "v"
+                  major_pattern: "(MAJOR)"
+                  minor_pattern: "(MINOR)"
+                  # The version format is labeled by the branch that was pushed to, if it is a pull request, make an empty label
+                  version_format: "${major}.${minor}.${patch}-${increment}"
+                  bump_each_commit: false
+                  bump_each_commit_patch_pattern: ""
+                  user_format_type: "csv"
+                  enable_prerelease_mode: true
+
+            # Display the extracted version to the console.
+            - name: print outputs
+              run: echo ${{ steps.semver.outputs.version }}
+            - run: echo '${{format('v{0}.{1}.{2}', steps.semver.outputs.major, steps.semver.outputs.minor, steps.semver.outputs.patch)}}'
+                
+            # If a semantic version is specified in the PR title to main, 
+            # it will be in the commit message once the pr has been merged and it will overwrite the version from the paulhatch action.
+            - name: Extract version from commit
+              id: get_version_from_commit
+              if: github.ref_name == 'main'
+              run: |
+                echo "version=$(echo "${{github.event.head_commit.message}}" | grep -o -P "v[0-9]+\.[0-9]+\.[0-9]+" | sort -t: -u -k1,1)"  >> $GITHUB_OUTPUT
+            
+            # In order to make the tag push able to trigger the on: tag_push workflow,
+            # we need to use a personal access token instead of the build in GITHUB_TOKEN
+            - name: Create and push tag
+              if: github.ref_name == 'main'
+              run: |
+                git config --global url.https://${{secrets.USER_TOKEN}}@github.com/.insteadOf https://github.com/ && \
+                export TAG_VERSION=${{steps.get_version_from_commit.outputs.version == '' && format('v{0}.{1}.{2}', steps.semver.outputs.major, steps.semver.outputs.minor, steps.semver.outputs.patch) || steps.get_version_from_commit.outputs.version}} && \
+                git tag $TAG_VERSION && \
+                git push origin $TAG_VERSION
+
+            #### ONLY RUN IF Triggered on new Tag ####
+            # Initialize and configure Docker Buildx, a modern building toolkit.
+            - name: Setup Docker buildx
+              if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+              uses: docker/setup-buildx-action@v3
+              # Authenticate against the specified container registry, but skip this during pull requests.
+            - name: Log into registry ${{ env.REGISTRY }}
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+           
+            # Generate metadata like tags and labels for the Docker image.
+            - name: Extract Docker metadata
+              id: meta
+              if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                  tags: |
+                    type=schedule
+                    type=ref,event=branch
+                    type=ref,event=pr
+                    type=semver,pattern={{version}}
+                    type=semver,pattern={{major}}.{{minor}}
+                    type=semver,pattern={{major}}
+                    type=sha
+                    type=raw,value=${{steps.semver.outputs.version}}
+
+
+            # Push the image to the registry, excluding push during pull requests.
+            - name: Push docker image
+              id: push
+              if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+              uses: docker/build-push-action@v5
+              with:
+                  context: ./src/
+                  push: true
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}                  
+                  build-args: | 
+                    "VERSION=${{github.ref_type != 'tag' && steps.semver.outputs.version || format('v{0}.{1}.{2}', steps.semver.outputs.major, steps.semver.outputs.minor, steps.semver.outputs.patch)}}"
+            - name: Deploy Stage
+              uses: fjogeleit/http-request-action@v1
+              if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+              with:
+                url: 'https://portainer.viften.elkok.dk/api/stacks/webhooks/499d367b-2212-40f4-9981-4b9c7d18c57e'
+                method: 'POST'
+                data: ''
+                preventFailureOnNoResponse: 'true'

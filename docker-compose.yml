@@ -1,0 +1,13 @@
+version: '3'
+services:
+  db:
+    restart: unless-stopped
+    container_name: skygres
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_PASSWORD='Kode1234!'
+      - POSTGRES_DB=postgres
+    ports:
+      - "54320:5432"

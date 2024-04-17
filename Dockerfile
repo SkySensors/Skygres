@@ -1,4 +1,4 @@
-FROM postgres:alpine
+FROM postgis/postgis:16-3.4-alpine
 
 ENV PG_PARTMAN_VERSION v5.1.0
 ENV PG_CRON_VERSION 1.6.2

@@ -84,3 +84,11 @@ CREATE VIEW calibrated_sensor_values AS (
 /** Create cron job to calibrate sensors every day **/
 
 SELECT cron.schedule('daily-calibration-within-1000m', '0 1 * * *', $$CALL public.sp_calibration_of_sensors_offset(1, 1000)$$);
+
+CREATE TABLE time_slots(
+	mac_address macaddr PRIMARY KEY,
+	seconds_number int,
+	CONSTRAINT fk_macaddr
+		FOREIGN KEY(mac_address)
+		REFERENCES weather_stations(mac_address)
+)

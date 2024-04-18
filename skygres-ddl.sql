@@ -41,30 +41,30 @@ CREATE OR REPLACE PROCEDURE sp_calibration_of_sensors_offset(
    days_back int,
    in_radius int
 )
-LANGUAGE plpgsql    
+ LANGUAGE plpgsql
 AS $$
 BEGIN
-	UPDATE sensors
+	UPDATE public.sensors
 		SET calibration_offset = sub.calibration_offset
 	FROM (
 		/* Calculate the offset */
-		WITH a AS (
+		WITH stations_sensor_values AS (
 			SELECT ws.*, sv.TYPE, sv.unix_time, sv.value
 				, st_transform(ST_SetSrid(ST_MakePoint(lon, lat),4326),4326)::geography AS geog -- CREATE a location FROM longitude AND latitude
-			FROM weather_stations ws
-			LEFT JOIN sensors s ON ws.mac_address = s.mac_address 
+			FROM public.weather_stations ws
+			LEFT JOIN public.sensors s ON ws.mac_address = s.mac_address 
 			LEFT JOIN public.sensor_values sv ON ws.mac_address = sv.mac_address AND s."type" = sv.TYPE
 			-- Within this days
 			WHERE sv.unix_time > EXTRACT(EPOCH FROM NOW() - days_back * INTERVAL '1 DAY') * 1000
-		), b AS ( --Need two identical tables to join all nearby weather stations
-			SELECT ws.*, sv.TYPE, sv.unix_time, sv.value, st_transform(ST_SetSrid(ST_MakePoint(lon, lat),4326),4326)::geography AS geog
-			FROM weather_stations ws
-			LEFT JOIN sensors s ON ws.mac_address = s.mac_address 
-			LEFT JOIN public.sensor_values sv ON ws.mac_address = sv.mac_address AND s."type" = sv.TYPE
-			WHERE sv.unix_time > EXTRACT(EPOCH FROM NOW() - days_back * INTERVAL '1 DAY') * 1000
 		)
-		SELECT a.mac_address AS mac_address, a.TYPE, (AVG(b.value)/AVG(a.value))AS calibration_offset
-		FROM a JOIN b ON ST_DWithin(a.geog, b.geog, in_radius)
+		SELECT a.mac_address AS mac_address, a.TYPE
+			, COALESCE((AVG(b.value)/AVG(a.value)), 1)AS calibration_offset -- Need COALESCE IF NO nearby sensors it will RETURN NULL. NULL IS equal OFFSET 1
+		FROM stations_sensor_values AS a
+		LEFT JOIN stations_sensor_values AS b 
+			ON ST_DWithin(a.geog, b.geog, in_radius) 
+				AND a.TYPE = b.TYPE 
+				/** less rows = Optimized performance AND its NOT needed because we should NOT count the sensor it SELF WITH nearby sensor values **/
+				AND a.mac_address <> b.mac_address 
 		GROUP BY a.mac_address, a.TYPE
 	) AS sub 
 	WHERE sensors.mac_address = sub.mac_address AND sensors."type" = sub.TYPE;
@@ -85,15 +85,11 @@ CREATE VIEW calibrated_sensor_values AS (
 
 SELECT cron.schedule('daily-calibration-within-1000m', '0 1 * * *', $$CALL public.sp_calibration_of_sensors_offset(1, 1000)$$);
 
-CREATE TABLE time_slots(
+CREATE TABLE time_slots (
 	mac_address macaddr PRIMARY KEY,
-	seconds_number int,
-	CONSTRAINT fk_macaddr
-		FOREIGN KEY(mac_address)
-		REFERENCES weather_stations(mac_address)
-)
-
-
+	seconds_number int4 NOT NULL,
+	CONSTRAINT fk_macaddr FOREIGN KEY (mac_address) REFERENCES weather_stations(mac_address) ON DELETE CASCADE
+);
 
 CREATE FUNCTION get_possible_time_slot()
 RETURNS int
@@ -116,3 +112,6 @@ BEGIN
    RETURN possible_time_slot;
 END;
 $$;
+
+UPDATE cron.job
+	SET nodename='';

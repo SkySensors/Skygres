@@ -92,3 +92,27 @@ CREATE TABLE time_slots(
 		FOREIGN KEY(mac_address)
 		REFERENCES weather_stations(mac_address)
 )
+
+
+
+CREATE FUNCTION get_possible_time_slot()
+RETURNS int
+LANGUAGE plpgsql
+AS
+$$
+DECLARE
+   possible_time_slot integer;
+BEGIN
+	WITH possible_time_slots AS (
+		SELECT * FROM generate_series(0, 9)
+	) 
+	SELECT pts.generate_series
+	INTO possible_time_slot
+	FROM possible_time_slots pts
+	LEFT JOIN time_slots ts ON pts.generate_series = ts.seconds_number 
+	GROUP BY pts.generate_series
+	ORDER BY COUNT(ts.seconds_number) LIMIT 1;
+   
+   RETURN possible_time_slot;
+END;
+$$;
